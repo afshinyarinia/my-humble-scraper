@@ -1,72 +1,58 @@
-# scraper.py
-
-import requests
-from bs4 import BeautifulSoup
-import sqlite3
+import asyncio
+import sys
 import logging
-from urllib.parse import urlparse
+from web_scraper.scraper import AdvancedScraper
+from web_scraper.utils import read_urls_from_file
+from web_scraper.scheduler import ScraperScheduler
 
-# Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-class BasicScraper:
-    def __init__(self, db_name='scraper.db'):
-        self.db_name = db_name
-        self.setup_database()
+async def main():
+  if len(sys.argv) < 2:
+      print("Usage: poetry run scrape <url1> [url2 ...] OR poetry run scrape --file <urls_file> [--schedule <interval_minutes>]")
+      sys.exit(1)
 
-    def setup_database(self):
-        conn = sqlite3.connect(self.db_name)
-        c = conn.cursor()
-        c.execute('''CREATE TABLE IF NOT EXISTS scraped_data
-                   (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    url TEXT,
-                    domain TEXT,
-                    content TEXT,
-                    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)''')
-        conn.commit()
-        conn.close()
+  scraper = AdvancedScraper()
+  urls = []
+  schedule_interval = None
 
-    def scrape_url(self, url):
-        try:
-            response = requests.get(url)
-            response.raise_for_status()
+  if sys.argv[1] == '--file':
+      if len(sys.argv) < 3:
+          print("Please provide a file path when using --file option.")
+          sys.exit(1)
+      urls = read_urls_from_file(sys.argv[2])
+      if len(sys.argv) > 3 and sys.argv[3] == '--schedule':
+          if len(sys.argv) < 5:
+              print("Please provide an interval in minutes when using --schedule option.")
+              sys.exit(1)
+          schedule_interval = int(sys.argv[4])
+  else:
+      urls = sys.argv[1:]
 
-            soup = BeautifulSoup(response.text, 'html.parser')
-            content = soup.get_text()
+  selectors = {
+      'title': 'h1',
+      'paragraphs': 'p',
+      'links': 'a'
+  }
 
-            domain = urlparse(url).netloc
+  if schedule_interval:
+      scheduler = ScraperScheduler()
+      scheduler.add_job(urls, schedule_interval, selectors)
+      scheduler.start()
+      print(f"Scraper scheduled to run every {schedule_interval} minutes. Press Ctrl+C to exit.")
+      try:
+          # This will keep the main thread alive
+          while True:
+              await asyncio.sleep(1)
+      except KeyboardInterrupt:
+          scheduler.shutdown()
+  else:
+      results = await scraper.scrape_multiple_urls(urls, selectors)
+      for url, result in zip(urls, results):
+          if result:
+              print(f"Content scraped and saved for {url}")
+          else:
+              print(f"Scraping failed for {url}. Check the logs for more information.")
 
-            self.save_to_database(url, domain, content)
-            logging.info(f"Successfully scraped {url}")
-            return content
-        except requests.RequestException as e:
-            logging.error(f"Error scraping {url}: {str(e)}")
-            return None
-
-    def save_to_database(self, url, domain, content):
-        conn = sqlite3.connect(self.db_name)
-        c = conn.cursor()
-        c.execute("INSERT INTO scraped_data (url, domain, content) VALUES (?, ?, ?)",
-                  (url, domain, content))
-        conn.commit()
-        conn.close()
-
-# Command-line interface
 if __name__ == "__main__":
-    import sys
-
-    if len(sys.argv) != 2:
-        print("Usage: python scraper.py <url>")
-        sys.exit(1)
-
-    url = sys.argv[1]
-    scraper = BasicScraper()
-    result = scraper.scrape_url(url)
-
-    if result:
-        print(f"Content scraped and saved to database: {scraper.db_name}")
-    else:
-        print("Scraping failed. Check the logs for more information.")
-
-# Created/Modified files during execution:
-print("scraper.db")
+  asyncio.run(main())
