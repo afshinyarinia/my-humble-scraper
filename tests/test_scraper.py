@@ -1,6 +1,6 @@
 import pytest
-from web_scraper.scraper import BasicScraper
+from web_scraper.scraper import AdvancedScraper
 
 def test_scraper_initialization():
-  scraper = BasicScraper()
+  scraper = AdvancedScraper()
   assert scraper is not None
